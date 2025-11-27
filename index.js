@@ -15,12 +15,31 @@ const client = new Client({
     }
 });
 
-// Dummy Guest List (Replace with real numbers)
-// Format: 'countrycodephonenumber@c.us' e.g. '1234567890@c.us'
-const guestList = [
-    '1234567890@c.us',
-    '0987654321@c.us'
-];
+const fs = require('fs');
+
+// Load Guest List
+const guestListPath = process.env.GUEST_LIST_PATH;
+const guestMap = new Map();
+
+try {
+    const data = fs.readFileSync(guestListPath, 'utf8');
+    const lines = data.split('\n');
+    // Skip header (index 0)
+    for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line) {
+            const [name, phone] = line.split(',');
+            if (phone) {
+                // Format: 'countrycodephonenumber@c.us'
+                const formattedPhone = `${phone.trim()}@c.us`;
+                guestMap.set(formattedPhone, name.trim());
+            }
+        }
+    }
+    console.log(`Loaded ${guestMap.size} guests from ${guestListPath}`);
+} catch (err) {
+    console.error('Error loading guest list:', err);
+}
 
 client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
@@ -55,7 +74,7 @@ client.on('message_create', async msg => {
         // Avoid replying to self if it's just a casual mention, but for a bot it's usually fine to reply to others.
         // If we want to reply to everyone asking:
         if (!msg.fromMe) {
-            await msg.reply('We are at 14651 travis street, Overland Park, KS. Google Maps: https://maps.app.goo.gl/pnJ5aEP6j2Ky1KGF8');
+            await msg.reply('Join us at 14651 travis street, Overland Park, KS. Google Maps: https://maps.app.goo.gl/pnJ5aEP6j2Ky1KGF8');
             return;
         }
     }
@@ -65,7 +84,7 @@ client.on('message_create', async msg => {
         console.log('Broadcasting image...');
         const media = await msg.downloadMedia();
 
-        for (const guestId of guestList) {
+        for (const guestId of guestMap.keys()) {
             try {
                 await client.sendMessage(guestId, media, { caption: msg.body.replace('!broadcast', '').trim() });
                 console.log(`Sent to ${guestId}`);
@@ -80,13 +99,21 @@ client.on('message_create', async msg => {
     // 3. Thanksgiving Chat (AI)
     // Only reply to non-command messages from others
     if (!msg.fromMe && !messageBody.startsWith('!')) {
+
+        // Check if sender is in the guest list
+        if (!guestMap.has(msg.from)) {
+            console.log(`Ignoring message from unknown number: ${msg.from}`);
+            return;
+        }
+
+        const guestName = guestMap.get(msg.from);
+
         // Check if it's a group chat to avoid spamming, or just reply to direct messages.
         // For this party bot, let's assume it replies to DMs or mentions.
-        // But the requirement says "If the message is conversational".
-        // Let's filter out the navigation keywords first (handled above).
 
         try {
-            const result = await model.generateContent(`You are a helpful Thanksgiving host assistant. Reply to this message: ${msg.body}`);
+            const prompt = `You are a helpful Thanksgiving host assistant, who is hosting a Thanksgiving party today. You have to help the guests with their queries. Make sure to reply in a friendly and helpful manner and always stick to the topic. You are talking to ${guestName}. Reply to this message: ${msg.body}`;
+            const result = await model.generateContent(prompt);
             const response = result.response;
             const text = response.text();
             await msg.reply(text);
